@@ -1,7 +1,5 @@
-import streamlit as st
-from openai import OpenAI
-import json
-import random
-import datetime
-import pandas as pd
-import os
+streamlit
+openai>=1.55.0
+pandas
+python-dotenv
+
