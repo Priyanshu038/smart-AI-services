@@ -3,9 +3,19 @@
 # Streamlit set page
 st.set_page_config(page_title="Dining Agent", layout="wide")
 
-# OpenAI API setup
-API_KEY = os.environ.get("OPENAI_API_KEY", "")
-client = OpenAI(api_key=API_KEY)
+
+# API KEY INPUT IN SIDEBAR
+
+st.sidebar.title(" Dining")
+api_key_input = st.sidebar.text_input("Enter OpenAI API Key", type="password")
+
+if api_key_input:
+    API_KEY = api_key_input
+else:
+    API_KEY = ""
+
+client = OpenAI(api_key=API_KEY) if API_KEY else None
+# ------------------------------
 
 ## Data Model generation
 
@@ -38,7 +48,6 @@ def generate_restaurants(count=50):
 def search_restaurants(criteria):
     results = st.session_state.restaurants
 
-    # Filter Logic
     if criteria.get('cuisine'):
         results = [r for r in results if criteria['cuisine'].lower() in r['cuisine'].lower()]
     if criteria.get('location'):
@@ -48,18 +57,15 @@ def search_restaurants(criteria):
     if criteria.get('party_size'):
         results = [r for r in results if r['capacity'] >= criteria['party_size']]
 
-    # Price Filter
     price_levels = {'Cheap': 1, 'Moderate': 2, 'Expensive': 3, 'Luxury': 4}
     if criteria.get('max_price'):
         max_p = price_levels.get(criteria['max_price'], 4)
         results = [r for r in results if price_levels.get(r['price'], 1) <= max_p]
 
-    # Keyword Search
     if criteria.get('query'):
         q = criteria['query'].lower()
         results = [r for r in results if q in r['name'].lower() or any(q in v.lower() for v in r['vibe'])]
 
-    # Sort & Limit
     results.sort(key=lambda x: x['rating'], reverse=True)
     return results[:5]
 
@@ -69,14 +75,12 @@ def make_reservation(details):
     party = details.get('party_size')
     time = details.get('time')
 
-    # Validation
     restaurant = next((r for r in st.session_state.restaurants if r['id'] == r_id), None)
     if not restaurant:
         return {"error": "Restaurant ID not found."}
     if restaurant['capacity'] < party:
         return {"error": "Capacity exceeded."}
 
-    # Create Booking
     res_id = f"RES-{random.randint(1000, 9999)}"
     est_rev = PRICE_VALUES[restaurant['price']] * party
 
@@ -92,7 +96,6 @@ def make_reservation(details):
     return {"success": True, "reservation_id": res_id, "message": f"Booked {restaurant['name']} for {party} at {time}."}
 
 
-# Tool definitions for OpenAI
 openai_tools = [
     {
         "type": "function",
@@ -140,8 +143,6 @@ if 'chat_history' not in st.session_state:
 if 'intent_log' not in st.session_state:
     st.session_state.intent_log = []
 
-## UI SIDEBAR
-st.sidebar.title(" Dining")
 page = st.sidebar.radio("Navigation", ["Reservation Agent", "Business Intelligence"])
 
 st.sidebar.markdown("---")
@@ -196,12 +197,10 @@ if page == "Business Intelligence":
 elif page == "Reservation Agent":
     st.title("FOOD EXPRESS")
 
-    # Display Chat History
     for msg in st.session_state.chat_history:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    # Chat Input
     if prompt := st.chat_input("How can I help you dine today?"):
 
         st.session_state.chat_history.append({"role": "user", "content": prompt})
@@ -212,8 +211,15 @@ elif page == "Reservation Agent":
             message_placeholder = st.empty()
             message_placeholder.markdown("Thinking...")
 
+            # -----------------------
+            # API KEY CHECK (ADDED)
+            # -----------------------
+            if not client:
+                message_placeholder.markdown("⚠️ Please enter your OpenAI API Key in the sidebar.")
+                st.stop()
+            # -----------------------
+
             try:
-                # Build conversation history for OpenAI
                 messages = [
                     {"role": msg["role"], "content": msg["content"]}
                     for msg in st.session_state.chat_history[:-1]
@@ -226,7 +232,6 @@ elif page == "Reservation Agent":
 
                 messages.append({"role": "user", "content": prompt})
 
-                # Step 1 — Ask OpenAI
                 response = client.responses.create(
                     model="gpt-4.1-mini",
                     messages=messages,
@@ -236,7 +241,7 @@ elif page == "Reservation Agent":
                 msg_out = response.output[0]
 
                 if msg_out.type == "function_call":
-                    # Tool call
+
                     tool_name = msg_out.name
                     tool_args = json.loads(msg_out.arguments)
 
@@ -246,10 +251,13 @@ elif page == "Reservation Agent":
                         "Parameters": str(tool_args)
                     })
 
-                    # Execute tool
+                    tools_map = {
+                        "search_restaurants": search_restaurants,
+                        "make_reservation": make_reservation
+                    }
+
                     result = tools_map.get(tool_name, lambda x: {"error": "Unknown tool"})(tool_args)
 
-                    # Step 2 — Send result back to OpenAI
                     followup = client.responses.create(
                         model="gpt-4.1-mini",
                         messages=[
@@ -268,5 +276,3 @@ elif page == "Reservation Agent":
 
             except Exception as e:
                 message_placeholder.markdown(f"System Error:{e}")
-                if not API_KEY:
-                    st.error("Please set OPENAI_API_KEY environment variable.")
